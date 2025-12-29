@@ -106,13 +106,12 @@ func New(ctx context.Context, config *Config) (*DNS, error) {
 
 	for _, ns := range config.NameServer {
 		clientIdx := len(clients)
-		updateDomain := func(domainRule strmatcher.Matcher, originalRuleIdx int, matcherInfos []*DomainMatcherInfo) error {
+		updateDomain := func(domainRule strmatcher.Matcher, originalRuleIdx int, matcherInfos []*DomainMatcherInfo) {
 			midx := domainMatcher.Add(domainRule)
 			matcherInfos[midx] = &DomainMatcherInfo{
 				clientIdx:     uint16(clientIdx),
 				domainRuleIdx: uint16(originalRuleIdx),
 			}
-			return nil
 		}
 
 		myClientIP := clientIP
@@ -121,8 +120,16 @@ func New(ctx context.Context, config *Config) (*DNS, error) {
 			myClientIP = net.IP(ns.ClientIp)
 		}
 
-		disableCache := config.DisableCache || ns.DisableCache
-		serveStale := config.ServeStale || ns.ServeStale
+		disableCache := config.DisableCache
+		if ns.DisableCache != nil {
+			disableCache = *ns.DisableCache
+		}
+
+		serveStale := config.ServeStale
+		if ns.ServeStale != nil {
+			serveStale = *ns.ServeStale
+		}
+
 		serveExpiredTTL := config.ServeExpiredTTL
 		if ns.ServeExpiredTTL != nil {
 			serveExpiredTTL = *ns.ServeExpiredTTL
