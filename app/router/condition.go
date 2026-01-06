@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"os"
 	"regexp"
 	"strings"
 
@@ -304,4 +305,84 @@ func (m *AttributeMatcher) Apply(ctx routing.Context) bool {
 		return false
 	}
 	return m.Match(attributes)
+}
+
+// Geo attribute
+type GeoAttributeMatcher interface {
+	Match(*Domain) bool
+}
+
+type GeoBooleanMatcher string
+
+func (m GeoBooleanMatcher) Match(domain *Domain) bool {
+	for _, attr := range domain.Attribute {
+		if attr.Key == string(m) {
+			return true
+		}
+	}
+	return false
+}
+
+type GeoAttributeList struct {
+	Matcher []GeoAttributeMatcher
+}
+
+func (al *GeoAttributeList) Match(domain *Domain) bool {
+	for _, matcher := range al.Matcher {
+		if !matcher.Match(domain) {
+			return false
+		}
+	}
+	return true
+}
+
+func (al *GeoAttributeList) IsEmpty() bool {
+	return len(al.Matcher) == 0
+}
+
+func ParseAttrs(attrs []string) *GeoAttributeList {
+	al := new(GeoAttributeList)
+	for _, attr := range attrs {
+		lc := strings.ToLower(attr)
+		al.Matcher = append(al.Matcher, GeoBooleanMatcher(lc))
+	}
+	return al
+}
+
+type ProcessNameMatcher struct {
+	names []string
+}
+
+func (m *ProcessNameMatcher) Apply(ctx routing.Context) bool {
+	srcPort := ctx.GetSourcePort().String()
+	srcIP := ctx.GetSourceIPs()[0].String()
+	var network string
+	switch ctx.GetNetwork() {
+	case net.Network_TCP:
+		network = "tcp"
+	case net.Network_UDP:
+		network = "udp"
+	default:
+		return false
+	}
+	src, err := net.ParseDestination(strings.Join([]string{network, srcIP, srcPort}, ":"))
+	if err != nil {
+		return false
+	}
+	pid, name, err := net.FindProcess(src)
+	if err != nil {
+		if err != net.ErrNotLocal {
+			errors.LogError(context.Background(), "Unables to find local process name: ", err)
+		}
+		return false
+	}
+	for _, n := range m.names {
+		if name == "/self" && pid == os.Getpid() {
+			return true
+		}
+		if n == name {
+			return true
+		}
+	}
+	return false
 }
