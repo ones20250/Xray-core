@@ -291,7 +291,7 @@ func loadGeositeWithAttr(file string, siteWithAttr string) ([]*router.Domain, er
 	return filteredDomains, nil
 }
 
-func parseDomainRule(domain string) ([]*router.Domain, error) {
+func ParseDomainRule(domain string) ([]*router.Domain, error) {
 	if strings.HasPrefix(domain, "geosite:") {
 		country := strings.ToUpper(domain[8:])
 		domains, err := loadGeositeWithAttr("geosite.dat", country)
@@ -449,22 +449,22 @@ func ToCidrList(ips StringList) ([]*router.GeoIP, error) {
 func parseFieldRule(msg json.RawMessage) (*router.RoutingRule, error) {
 	type RawFieldRule struct {
 		RouterRule
-		Domain      *StringList       `json:"domain"`
-		Domains     *StringList       `json:"domains"`
-		IP          *StringList       `json:"ip"`
-		Port        *PortList         `json:"port"`
-		Network     *NetworkList      `json:"network"`
-		SourceIP    *StringList       `json:"sourceIP"`
-		Source      *StringList       `json:"source"`
-		SourcePort  *PortList         `json:"sourcePort"`
-		User        *StringList       `json:"user"`
-		VlessRoute  *PortList         `json:"vlessRoute"`
-		InboundTag  *StringList       `json:"inboundTag"`
-		Protocols   *StringList       `json:"protocol"`
-		Attributes  map[string]string `json:"attrs"`
-		LocalIP     *StringList       `json:"localIP"`
-		LocalPort   *PortList         `json:"localPort"`
-		ProcessName *StringList       `json:"processName"`
+		Domain     *StringList       `json:"domain"`
+		Domains    *StringList       `json:"domains"`
+		IP         *StringList       `json:"ip"`
+		Port       *PortList         `json:"port"`
+		Network    *NetworkList      `json:"network"`
+		SourceIP   *StringList       `json:"sourceIP"`
+		Source     *StringList       `json:"source"`
+		SourcePort *PortList         `json:"sourcePort"`
+		User       *StringList       `json:"user"`
+		VlessRoute *PortList         `json:"vlessRoute"`
+		InboundTag *StringList       `json:"inboundTag"`
+		Protocols  *StringList       `json:"protocol"`
+		Attributes map[string]string `json:"attrs"`
+		LocalIP    *StringList       `json:"localIP"`
+		LocalPort  *PortList         `json:"localPort"`
+		Process    *StringList       `json:"process"`
 	}
 	rawFieldRule := new(RawFieldRule)
 	err := json.Unmarshal(msg, rawFieldRule)
@@ -489,7 +489,7 @@ func parseFieldRule(msg json.RawMessage) (*router.RoutingRule, error) {
 
 	if rawFieldRule.Domain != nil {
 		for _, domain := range *rawFieldRule.Domain {
-			rules, err := parseDomainRule(domain)
+			rules, err := ParseDomainRule(domain)
 			if err != nil {
 				return nil, errors.New("failed to parse domain rule: ", domain).Base(err)
 			}
@@ -499,7 +499,7 @@ func parseFieldRule(msg json.RawMessage) (*router.RoutingRule, error) {
 
 	if rawFieldRule.Domains != nil {
 		for _, domain := range *rawFieldRule.Domains {
-			rules, err := parseDomainRule(domain)
+			rules, err := ParseDomainRule(domain)
 			if err != nil {
 				return nil, errors.New("failed to parse domain rule: ", domain).Base(err)
 			}
@@ -577,10 +577,8 @@ func parseFieldRule(msg json.RawMessage) (*router.RoutingRule, error) {
 		rule.Attributes = rawFieldRule.Attributes
 	}
 
-	if rawFieldRule.ProcessName != nil {
-		for _, s := range *rawFieldRule.ProcessName {
-			rule.ProcessName = append(rule.ProcessName, s)
-		}
+	if rawFieldRule.Process != nil && len(*rawFieldRule.Process) > 0 {
+		rule.Process = *rawFieldRule.Process
 	}
 
 	return rule, nil

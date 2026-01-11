@@ -79,7 +79,7 @@ func (rr *RoutingRule) BuildCondition() (Condition, error) {
 		geoip := rr.Geoip
 		if runtime.GOOS != "windows" && runtime.GOOS != "wasm" {
 			var err error
-			geoip, err = getGeoIPList(rr.Geoip)
+			geoip, err = GetGeoIPList(rr.Geoip)
 			if err != nil {
 				return nil, errors.New("failed to build geoip from mmap").Base(err)
 			}
@@ -112,7 +112,7 @@ func (rr *RoutingRule) BuildCondition() (Condition, error) {
 		domains := rr.Domain
 		if runtime.GOOS != "windows" && runtime.GOOS != "wasm" {
 			var err error
-			domains, err = getDomainList(rr.Domain)
+			domains, err = GetDomainList(rr.Domain)
 			if err != nil {
 				return nil, errors.New("failed to build domains from mmap").Base(err)
 			}
@@ -122,16 +122,12 @@ func (rr *RoutingRule) BuildCondition() (Condition, error) {
 		if err != nil {
 			return nil, errors.New("failed to build domain condition with MphDomainMatcher").Base(err)
 		}
-		errors.LogDebug(context.Background(), "MphDomainMatcher is enabled for ", len(rr.Domain), " domain rule(s)")
+		errors.LogDebug(context.Background(), "MphDomainMatcher is enabled for ", len(domains), " domain rule(s)")
 		conds.Add(matcher)
 	}
 
-	if len(rr.ProcessName) > 0 {
-		refinedNames := make([]string, 0, len(rr.ProcessName))
-		for _, name := range rr.ProcessName {
-			refinedNames = append(refinedNames, strings.TrimSuffix(name, ".exe"))
-		}
-		conds.Add(&ProcessNameMatcher{refinedNames})
+	if len(rr.Process) > 0 {
+		conds.Add(NewProcessNameMatcher(rr.Process))
 	}
 
 	if conds.Len() == 0 {
@@ -188,7 +184,7 @@ func (br *BalancingRule) Build(ohm outbound.Manager, dispatcher routing.Dispatch
 	}
 }
 
-func getGeoIPList(ips []*GeoIP) ([]*GeoIP, error) {
+func GetGeoIPList(ips []*GeoIP) ([]*GeoIP, error) {
 	geoipList := []*GeoIP{}
 	for _, ip := range ips {
 		if ip.CountryCode != "" {
@@ -218,7 +214,7 @@ func getGeoIPList(ips []*GeoIP) ([]*GeoIP, error) {
 
 }
 
-func getDomainList(domains []*Domain) ([]*Domain, error) {
+func GetDomainList(domains []*Domain) ([]*Domain, error) {
 	domainList := []*Domain{}
 	for _, domain := range domains {
 		val := strings.Split(domain.Value, "_")
