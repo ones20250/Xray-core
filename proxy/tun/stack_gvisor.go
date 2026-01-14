@@ -6,8 +6,10 @@ import (
 
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/net"
+	"gvisor.dev/gvisor/pkg/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
+	"gvisor.dev/gvisor/pkg/tcpip/checksum"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv6"
@@ -100,35 +102,87 @@ func (t *stackGVisor) Start() error {
 	})
 	ipStack.SetTransportProtocolHandler(tcp.ProtocolNumber, tcpForwarder.HandlePacket)
 
-	udpForwarder := udp.NewForwarder(ipStack, func(r *udp.ForwarderRequest) {
-		go func(r *udp.ForwarderRequest) {
-			var wq waiter.Queue
-			var id = r.ID()
+	// Use custom UDP packet handler, instead of strict gVisor forwarder, for FullCone NAT support
+	udpForwarder := newUdpConnectionHandler(t.handler.HandleConnection, t.writeRawUDPPacket)
+	ipStack.SetTransportProtocolHandler(udp.ProtocolNumber, func(id stack.TransportEndpointID, pkt *stack.PacketBuffer) bool {
+		data := pkt.Data().AsRange().ToSlice()
+		if len(data) == 0 {
+			return false
+		}
+		// source/destination of the packet we process as incoming, on gVisor side are Remote/Local
+		// in other terms, src is the side behind tun, dst is the side behind gVisor
+		// this function handle packets passing from the tun to the gVisor, therefore the src/dst assignement
+		src := net.UDPDestination(net.IPAddress(id.RemoteAddress.AsSlice()), net.Port(id.RemotePort))
+		dst := net.UDPDestination(net.IPAddress(id.LocalAddress.AsSlice()), net.Port(id.LocalPort))
 
-			ep, err := r.CreateEndpoint(&wq)
-			if err != nil {
-				errors.LogError(t.ctx, err.String())
-				return
-			}
-
-			options := ep.SocketOptions()
-			options.SetReuseAddress(true)
-			options.SetReusePort(true)
-
-			t.handler.HandleConnection(
-				gonet.NewUDPConn(&wq, ep),
-				// local address on the gVisor side is connection destination
-				net.UDPDestination(net.IPAddress(id.LocalAddress.AsSlice()), net.Port(id.LocalPort)),
-			)
-
-			// close the socket
-			ep.Close()
-		}(r)
+		return udpForwarder.HandlePacket(src, dst, data)
 	})
-	ipStack.SetTransportProtocolHandler(udp.ProtocolNumber, udpForwarder.HandlePacket)
 
 	t.stack = ipStack
 	t.endpoint = linkEndpoint
+
+	return nil
+}
+
+func (t *stackGVisor) writeRawUDPPacket(payload []byte, src net.Destination, dst net.Destination) error {
+	udpLen := header.UDPMinimumSize + len(payload)
+	srcIP := tcpip.AddrFromSlice(src.Address.IP())
+	dstIP := tcpip.AddrFromSlice(dst.Address.IP())
+
+	// build packet with appropriate IP header size
+	isIPv4 := dst.Address.Family().IsIPv4()
+	ipHdrSize := header.IPv6MinimumSize
+	ipProtocol := header.IPv6ProtocolNumber
+	if isIPv4 {
+		ipHdrSize = header.IPv4MinimumSize
+		ipProtocol = header.IPv4ProtocolNumber
+	}
+
+	pkt := stack.NewPacketBuffer(stack.PacketBufferOptions{
+		ReserveHeaderBytes: ipHdrSize + header.UDPMinimumSize,
+		Payload:            buffer.MakeWithData(payload),
+	})
+	defer pkt.DecRef()
+
+	// Build UDP header
+	udpHdr := header.UDP(pkt.TransportHeader().Push(header.UDPMinimumSize))
+	udpHdr.Encode(&header.UDPFields{
+		SrcPort: uint16(src.Port),
+		DstPort: uint16(dst.Port),
+		Length:  uint16(udpLen),
+	})
+
+	// Calculate and set UDP checksum
+	xsum := header.PseudoHeaderChecksum(header.UDPProtocolNumber, srcIP, dstIP, uint16(udpLen))
+	udpHdr.SetChecksum(^udpHdr.CalculateChecksum(checksum.Checksum(payload, xsum)))
+
+	// Build IP header
+	if isIPv4 {
+		ipHdr := header.IPv4(pkt.NetworkHeader().Push(header.IPv4MinimumSize))
+		ipHdr.Encode(&header.IPv4Fields{
+			TotalLength: uint16(header.IPv4MinimumSize + udpLen),
+			TTL:         64,
+			Protocol:    uint8(header.UDPProtocolNumber),
+			SrcAddr:     srcIP,
+			DstAddr:     dstIP,
+		})
+		ipHdr.SetChecksum(^ipHdr.CalculateChecksum())
+	} else {
+		ipHdr := header.IPv6(pkt.NetworkHeader().Push(header.IPv6MinimumSize))
+		ipHdr.Encode(&header.IPv6Fields{
+			PayloadLength:     uint16(udpLen),
+			TransportProtocol: header.UDPProtocolNumber,
+			HopLimit:          64,
+			SrcAddr:           srcIP,
+			DstAddr:           dstIP,
+		})
+	}
+
+	// dispatch the packet
+	err := t.stack.WriteRawPacket(defaultNIC, ipProtocol, buffer.MakeWithView(pkt.ToView()))
+	if err != nil {
+		return errors.New("failed to write raw udp packet back to stack", err)
+	}
 
 	return nil
 }
