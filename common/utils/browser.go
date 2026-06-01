@@ -155,7 +155,7 @@ var (
 	AnchoredChromeVersion = ChromeVersion()
 	ChromeUA              = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + strconv.Itoa(AnchoredChromeVersion) + ".0.0.0 Safari/537.36"
 	ChromeUACH            = getGreasedChUa(AnchoredChromeVersion, "chrome")
-	MSEdgeUA              = ChromeUA + "Edg/" + strconv.Itoa(AnchoredChromeVersion) + ".0.0.0"
+	MSEdgeUA              = ChromeUA + " Edg/" + strconv.Itoa(AnchoredChromeVersion) + ".0.0.0"
 	MSEdgeUACH            = getGreasedChUa(AnchoredChromeVersion, "edge")
 )
 
